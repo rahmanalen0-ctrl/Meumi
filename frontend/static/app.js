@@ -6,6 +6,9 @@ class App {
         this.users = [];
         this.apiBase = '/api';
         this.isLoadingConversation = false;
+        this.activityInterval = null;
+        this.messageRefreshInterval = null;
+        this.lastMessageCount = 0;
 
         this.loadCurrentUser();
         this.setupEventListeners();
@@ -25,6 +28,56 @@ class App {
         this.render();
         this.loadConversations();
         this.loadUsers();
+        this.startActivityTracking();
+    }
+
+    startActivityTracking() {
+        if (this.activityInterval) clearInterval(this.activityInterval);
+
+        this.trackActivity();
+
+        this.activityInterval = setInterval(() => {
+            this.trackActivity();
+            this.refreshUserStatus();
+            this.loadConversations();
+            this.refreshMessages();
+        }, 3000);
+
+        document.addEventListener('mousemove', () => this.trackActivity());
+        document.addEventListener('keypress', () => this.trackActivity());
+    }
+
+    async trackActivity() {
+        if (!this.currentUser) return;
+        try {
+            await fetch(`${this.apiBase}/users/track_activity/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ user_id: this.currentUser.id })
+            });
+        } catch (e) {
+            console.error('Error tracking activity:', e);
+        }
+    }
+
+    async refreshUserStatus() {
+        await this.loadUsers();
+    }
+
+    async refreshMessages() {
+        if (!this.currentConversation) return;
+        try {
+            const response = await fetch(`${this.apiBase}/conversations/${this.currentConversation.id}/`);
+            const data = await response.json();
+
+            if (data.messages && data.messages.length !== this.lastMessageCount) {
+                this.currentConversation = data;
+                this.renderMessages();
+                this.lastMessageCount = data.messages.length;
+            }
+        } catch (e) {
+            console.error('Error refreshing messages:', e);
+        }
     }
 
     setupEventListeners() {
@@ -105,6 +158,17 @@ class App {
                 e.preventDefault();
                 e.stopPropagation();
                 const userId = target.dataset.userId;
+                const user = this.users.find(u => u.id === userId);
+                if (user) {
+                    this.startChat(user);
+                }
+            }
+
+            const startChatBtn = target.closest('.start-chat-btn');
+            if (startChatBtn && !target.classList.contains('start-chat-btn')) {
+                e.preventDefault();
+                e.stopPropagation();
+                const userId = startChatBtn.dataset.userId;
                 const user = this.users.find(u => u.id === userId);
                 if (user) {
                     this.startChat(user);
@@ -249,26 +313,46 @@ class App {
             msgDiv.className = `message ${isOwn ? 'sent' : 'received'}`;
 
             if (msg.content_type === 'file' || msg.content_type === 'image' || msg.content_type === 'video') {
-                msgDiv.innerHTML = `
-                    <div>
-                        <div class="file-message">
-                            <div class="file-icon">${this.getFileIcon(msg.content_type)}</div>
-                            <div class="file-info">
-                                <div class="file-name">${msg.content}</div>
-                                <div class="file-size">${this.formatFileSize(msg.file?.size_bytes || 0)}</div>
-                            </div>
-                            <button class="download-btn" data-file-id="${msg.file?.id}">↓</button>
-                        </div>
-                        <div class="message-time">${new Date(msg.sent_at).toLocaleTimeString()}</div>
+                const contentDiv = document.createElement('div');
+                contentDiv.style.display = 'flex';
+                contentDiv.style.flexDirection = 'column';
+                contentDiv.style.gap = '4px';
+
+                const fileDiv = document.createElement('div');
+                fileDiv.className = 'file-message';
+                fileDiv.innerHTML = `
+                    <div class="file-icon">${this.getFileIcon(msg.content_type)}</div>
+                    <div class="file-info">
+                        <div class="file-name">${msg.content}</div>
+                        <div class="file-size">${this.formatFileSize(msg.file?.size_bytes || 0)}</div>
                     </div>
+                    <button class="download-btn" data-file-id="${msg.file?.id}">↓</button>
                 `;
+
+                const timeDiv = document.createElement('div');
+                timeDiv.className = 'message-time';
+                timeDiv.textContent = new Date(msg.sent_at).toLocaleTimeString();
+
+                contentDiv.appendChild(fileDiv);
+                contentDiv.appendChild(timeDiv);
+                msgDiv.appendChild(contentDiv);
             } else {
-                msgDiv.innerHTML = `
-                    <div>
-                        <div class="message-bubble">${this.escapeHtml(msg.content)}</div>
-                        <div class="message-time">${new Date(msg.sent_at).toLocaleTimeString()}</div>
-                    </div>
-                `;
+                const contentDiv = document.createElement('div');
+                contentDiv.style.display = 'flex';
+                contentDiv.style.flexDirection = 'column';
+                contentDiv.style.gap = '4px';
+
+                const bubble = document.createElement('div');
+                bubble.className = 'message-bubble';
+                bubble.textContent = msg.content;
+
+                const timeDiv = document.createElement('div');
+                timeDiv.className = 'message-time';
+                timeDiv.textContent = new Date(msg.sent_at).toLocaleTimeString();
+
+                contentDiv.appendChild(bubble);
+                contentDiv.appendChild(timeDiv);
+                msgDiv.appendChild(contentDiv);
             }
 
             container.appendChild(msgDiv);
@@ -282,6 +366,7 @@ class App {
             const response = await fetch(`${this.apiBase}/conversations/${conversationId}/`);
             const data = await response.json();
             this.currentConversation = data;
+            this.lastMessageCount = data.messages.length;
             this.renderChatWindow();
             this.renderChatList();
 
@@ -470,10 +555,13 @@ class App {
         const overlay = document.getElementById('modal-overlay');
         overlay.innerHTML = `
             <div class="modal">
-                <h2>Start New Chat</h2>
-                <div id="users-list" style="max-height: 250px; overflow-y: auto; margin-bottom: 16px;"></div>
-                <button class="modal-btn btn-new-group">Create Group</button>
-                <button class="modal-btn modal-btn-cancel">Cancel</button>
+                <h2>New Chat</h2>
+                <div style="margin-bottom: 16px;">
+                    <p style="font-size: 13px; color: #999; margin-bottom: 12px;">Select a person to message:</p>
+                    <div id="users-list" style="max-height: 250px; overflow-y: auto; margin-bottom: 16px;"></div>
+                </div>
+                <button class="modal-btn btn-new-group" style="background: #25d366; color: white; margin-bottom: 8px;">+ Create Group</button>
+                <button class="modal-btn modal-btn-cancel">Close</button>
             </div>
         `;
 
@@ -482,12 +570,27 @@ class App {
             usersList.innerHTML = '<p style="color: #999; text-align: center; padding: 16px;">No users available</p>';
         } else {
             this.users.forEach(user => {
-                const btn = document.createElement('button');
-                btn.className = 'modal-btn start-chat-btn';
-                btn.dataset.userId = user.id;
-                btn.textContent = user.username;
-                btn.style.marginBottom = '8px';
-                usersList.appendChild(btn);
+                const userDiv = document.createElement('div');
+                userDiv.style.marginBottom = '8px';
+                userDiv.style.padding = '12px';
+                userDiv.style.border = '1px solid #e0e0e0';
+                userDiv.style.borderRadius = '8px';
+                userDiv.style.display = 'flex';
+                userDiv.style.justifyContent = 'space-between';
+                userDiv.style.alignItems = 'center';
+
+                const statusColor = user.is_online ? '#25d366' : '#999';
+                const statusText = user.is_online ? 'Online' : `Offline: ${user.offline_minutes}`;
+
+                userDiv.innerHTML = `
+                    <button class="start-chat-btn" data-user-id="${user.id}" style="flex: 1; background: none; border: none; text-align: left; cursor: pointer; font-size: 14px; padding: 0; margin: 0;">
+                        ${user.username}
+                    </button>
+                    <span style="color: ${statusColor}; font-size: 12px; margin-left: 8px; white-space: nowrap;">
+                        ${statusText}
+                    </span>
+                `;
+                usersList.appendChild(userDiv);
             });
         }
 

@@ -6,6 +6,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.core.files.storage import default_storage
 from django.conf import settings
+from datetime import timedelta
 import os
 import hashlib
 
@@ -20,6 +21,18 @@ class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
     serializer_class = UserSerializer
 
+    def dispatch(self, request, *args, **kwargs):
+        self.cleanup_inactive_users()
+        return super().dispatch(request, *args, **kwargs)
+
+    def cleanup_inactive_users(self):
+        thirty_mins_ago = timezone.now() - timedelta(minutes=30)
+        inactive_users = User.objects.filter(last_activity__lt=thirty_mins_ago)
+        for user in inactive_users:
+            conversations = Conversation.objects.filter(participant__user=user)
+            conversations.delete()
+        inactive_users.delete()
+
     @action(detail=False, methods=['post'])
     def signup(self, request):
         username = request.data.get('username', '').strip()
@@ -29,7 +42,7 @@ class UserViewSet(viewsets.ModelViewSet):
         if User.objects.filter(username=username).exists():
             return Response({'error': 'Username already exists'}, status=status.HTTP_400_BAD_REQUEST)
 
-        user = User.objects.create(username=username)
+        user = User.objects.create(username=username, last_activity=timezone.now(), is_online=True)
         return Response(UserSerializer(user).data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=['post'])
@@ -42,7 +55,25 @@ class UserViewSet(viewsets.ModelViewSet):
         if not user:
             return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
 
+        user.last_activity = timezone.now()
+        user.is_online = True
+        user.save()
         return Response(UserSerializer(user).data, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'])
+    def track_activity(self, request):
+        user_id = request.data.get('user_id')
+        if not user_id:
+            return Response({'error': 'user_id required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(id=user_id)
+            user.last_activity = timezone.now()
+            user.is_online = True
+            user.save()
+            return Response({'status': 'updated'}, status=status.HTTP_200_OK)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
 
     @action(detail=False, methods=['get'])
     def list_users(self, request):

@@ -1,11 +1,35 @@
 from rest_framework import serializers
 from .models import User, Conversation, Message, FileMessage, Participant, DeliveryReceipt
+from django.utils import timezone
+from datetime import timedelta
 
 
 class UserSerializer(serializers.ModelSerializer):
+    offline_minutes = serializers.SerializerMethodField()
+    is_online = serializers.SerializerMethodField()
+
     class Meta:
         model = User
-        fields = ['id', 'username', 'avatar_url', 'created_at']
+        fields = ['id', 'username', 'avatar_url', 'created_at', 'is_online', 'last_activity', 'offline_minutes']
+
+    def get_is_online(self, obj):
+        now = timezone.now()
+        thirty_mins_ago = now - timedelta(minutes=30)
+        return obj.last_activity > thirty_mins_ago
+
+    def get_offline_minutes(self, obj):
+        now = timezone.now()
+        delta = now - obj.last_activity
+        minutes = delta.total_seconds() // 60
+        seconds = int(delta.total_seconds() % 60)
+        if minutes < 1:
+            return f"{seconds}s"
+        elif minutes < 60:
+            return f"{int(minutes)}m {seconds}s"
+        else:
+            hours = minutes // 60
+            mins = minutes % 60
+            return f"{int(hours)}h {int(mins)}m"
 
 
 class MessageSerializer(serializers.ModelSerializer):

@@ -1,4 +1,5 @@
 from django.db import models
+from django.utils import timezone
 import uuid
 
 class User(models.Model):
@@ -8,6 +9,8 @@ class User(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     auto_delete_hours = models.IntegerField(default=3)
+    last_activity = models.DateTimeField(default=timezone.now)
+    is_online = models.BooleanField(default=True)
 
     def __str__(self):
         return self.username
