@@ -1,0 +1,162 @@
+SIMPLE MESSAGING APP - PROJECT SUMMARY
+
+PROJECT STRUCTURE:
+==================
+
+messaging_app/
+├── backend/
+│   ├── config/
+│   │   ├── __init__.py
+│   │   ├── settings.py      (Django configuration - 1GB file upload limit)
+│   │   ├── urls.py          (Main URL routing)
+│   │   └── wsgi.py          (WSGI app)
+│   ├── chat/
+│   │   ├── migrations/
+│   │   ├── __init__.py
+│   │   ├── admin.py         (Django admin interface)
+│   │   ├── models.py        (Database models)
+│   │   ├── serializers.py   (REST API serializers)
+│   │   ├── urls.py          (API endpoints)
+│   │   └── views.py         (API logic)
+│   └── manage.py            (Django management script)
+├── frontend/
+│   ├── static/
+│   │   ├── app.js           (Main application logic)
+│   │   └── style.css        (Simple UI styling)
+│   └── templates/
+│       └── index.html       (Single page HTML)
+├── requirements.txt         (Python dependencies)
+├── RUN.bat                  (Windows startup script)
+└── SETUP.txt                (Installation guide)
+
+DATABASE MODELS:
+================
+
+User
+  - id (UUID, primary key)
+  - username (unique)
+  - avatar_url
+  - created_at, updated_at
+
+Conversation
+  - id (UUID, primary key)
+  - type ('one_to_one' or 'group')
+  - created_at
+  - participants (M2M via Participant)
+
+Participant
+  - id (UUID)
+  - conversation_id (FK)
+  - user_id (FK)
+  - joined_at
+
+Message
+  - id (UUID)
+  - conversation_id (FK)
+  - sender_id (FK)
+  - content (text)
+  - content_type ('text', 'file', 'image', 'video')
+  - sent_at
+  - edited (boolean)
+  - edited_at
+
+FileMessage
+  - id (UUID)
+  - message_id (OneToOne FK)
+  - storage_path (file location)
+  - mime_type
+  - size_bytes
+  - hash (for deduplication)
+  - uploaded_at
+
+DeliveryReceipt
+  - id (UUID)
+  - message_id (FK)
+  - recipient_id (FK)
+  - delivered (boolean)
+  - read (boolean)
+  - delivered_at, read_at
+
+API ENDPOINTS:
+==============
+
+USER MANAGEMENT:
+POST   /api/users/signup/         - Create user (auto on first login)
+POST   /api/users/login/          - Login with username
+GET    /api/users/list_users/     - List all users
+
+CONVERSATIONS:
+POST   /api/conversations/get_or_create/  - Start/get 1-to-1 chat
+GET    /api/conversations/{id}/           - Get conversation
+GET    /api/conversations/by_user/{id}/   - Get user's conversations
+GET    /api/conversations/{id}/messages/  - Get messages
+
+MESSAGES:
+POST   /api/messages/send/        - Send text message
+POST   /api/messages/{id}/mark_read/ - Mark read
+
+FILES:
+POST   /api/files/upload/         - Upload file (multipart, 1GB max)
+GET    /api/files/download/       - Download file (query param: file_id)
+
+FRONTEND FEATURES:
+==================
+
+- Username-only login/signup (auto signup if not exists)
+- Chat list with search
+- Real-time message display
+- Text messaging
+- File upload (any type, up to 1GB)
+- File download
+- Message timestamps
+- Online presence (basic)
+- Responsive mobile-friendly UI
+- Profile menu with logout
+
+SIMPLE UI COMPONENTS:
+- Sidebar with chat list & search
+- Main chat window
+- Message bubbles (sent/received)
+- File preview with download
+- Modal for new chats
+- Modal for login/signup
+- Input area with file picker
+
+FILE UPLOAD:
+============
+- Max size: 1GB (1,073,741,824 bytes)
+- Storage: /media/ directory
+- Hash: SHA256 for deduplication
+- Types: All file types supported
+- Progress: Basic upload indicator
+- Download: Direct file restoration
+
+QUICK START:
+============
+
+1. pip install -r requirements.txt
+2. cd backend
+3. python manage.py makemigrations
+4. python manage.py migrate
+5. python manage.py runserver
+6. Open http://localhost:8000
+
+TECHNOLOGY STACK:
+=================
+- Backend: Django 4.2.7 + Django REST Framework
+- Frontend: Vanilla JavaScript (ES6+)
+- Database: SQLite (included, can upgrade to PostgreSQL)
+- Storage: Local filesystem (can use S3)
+- CORS: Enabled for all origins
+- No authentication middleware (simple username-based)
+
+NOTES:
+======
+- No password authentication - username only
+- Auto signup on first login
+- Messages persist in database
+- Files stored locally in /media/
+- Django admin at /admin/
+- SQLite database file: backend/db.sqlite3
+- Frontend is a single-page application (SPA)
+- No WebSocket/real-time in MVP (polling in frontend can be added)

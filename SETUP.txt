@@ -1,0 +1,61 @@
+MESSAGING APP - QUICK START
+
+1. INSTALL DEPENDENCIES
+   pip install -r requirements.txt
+
+2. RUN SERVER (Windows)
+   RUN.bat
+
+   OR Manual (All OS):
+   cd backend
+   python manage.py makemigrations
+   python manage.py migrate
+   python manage.py runserver
+
+3. OPEN IN BROWSER
+   http://localhost:8000
+
+4. FEATURES
+   - Username-only signup (auto-create or login)
+   - One-to-one messaging
+   - File upload up to 1GB
+   - Real-time message delivery
+   - Search conversations
+   - Download files
+   - Clean simple UI
+
+5. API ENDPOINTS
+   POST   /api/users/signup/              - Create user with username
+   POST   /api/users/login/               - Login with username
+   GET    /api/users/list_users/          - List all users
+   
+   POST   /api/conversations/get_or_create/ - Start/get conversation
+   GET    /api/conversations/{id}/        - Get conversation details
+   GET    /api/conversations/by_user/{id}/ - Get user's conversations
+   GET    /api/conversations/{id}/messages/ - Get messages
+   
+   POST   /api/messages/send/             - Send text message
+   POST   /api/messages/{id}/mark_read/   - Mark as read
+   
+   POST   /api/files/upload/              - Upload file (1GB max)
+   GET    /api/files/download/            - Download file
+
+6. DATABASE
+   SQLite (db.sqlite3) - auto-created on first run
+   Tables: User, Conversation, Participant, Message, FileMessage, DeliveryReceipt
+
+7. FOLDER STRUCTURE
+   backend/                - Django application
+   ├── config/            - Settings & URLs
+   ├── chat/              - Models, views, serializers
+   └── manage.py          - Django management
+   
+   frontend/             - Web interface
+   ├── static/           - CSS & JavaScript
+   └── templates/        - HTML
+
+8. NOTES
+   - Messages stored in database
+   - Files stored in /media/ folder (local)
+   - No authentication middleware (use username as ID)
+   - CORS enabled for all origins (change in production)

@@ -1,0 +1,146 @@
+GROUP CHAT FEATURES - COMPLETE IMPLEMENTATION
+
+WHAT'S NEW:
+===========
+
+1. GROUP CREATION
+   - Create group with custom name and description
+   - Choose privacy type: Public / Invite Only / Closed
+   - Set member limits: 5, 10, 15, or 50 members
+   - Admin can add/remove members
+
+2. GROUP PRIVACY TYPES
+   Public:      Anyone can join (no admin approval needed)
+   Invite Only: Users need invitation link to join
+   Closed:      Only admin can add members
+
+3. MEMBER LIMITS
+   - 5 members:  Small private groups
+   - 10 members: Medium teams
+   - 15 members: Larger discussions
+   - 50 members: Big groups
+
+4. FRONTEND CHANGES
+   - "+" button now shows modal with two options:
+     a) Direct Messages (1-to-1 chat)
+     b) Create Group (new group chat)
+   - Group creation modal with:
+     * Group name (required)
+     * Description (optional)
+     * Privacy type dropdown
+     * Member limit dropdown
+     * Member selection (optional, can add later)
+   - Chat list shows group names
+   - Chat header displays member count and privacy type
+   - Groups and DMs mixed in chat list
+
+5. BACKEND API ENDPOINTS (NEW)
+   POST   /api/conversations/create_group/
+          Create new group
+          Request: {
+              user_id: uuid,
+              group_name: string,
+              description: string (optional),
+              group_privacy: "public" | "invite" | "closed",
+              group_member_limit: 5 | 10 | 15 | 50,
+              member_ids: [uuid] (optional)
+          }
+          Response: Conversation object with group details
+
+   POST   /api/conversations/{id}/add_member/
+          Add user to group
+          Request: {
+              user_id: uuid,
+              requester_id: uuid
+          }
+          Rules:
+          - Closed groups: only admin can add
+          - Public groups: anyone can join
+          - Invite only: use this endpoint
+          - Max members check enforced
+
+   POST   /api/conversations/{id}/remove_member/
+          Remove user from group
+          Request: {
+              user_id: uuid,
+              requester_id: uuid
+          }
+          Rules:
+          - Only admin can remove members
+
+6. DATABASE CHANGES
+   Conversation model additions:
+   - name (CharField, max_length 255)
+   - description (TextField, optional)
+   - group_privacy (CharField: 'public', 'invite', 'closed')
+   - group_member_limit (IntegerField: 5, 10, 15, 50)
+   - group_admin (ForeignKey to User)
+
+7. HOW TO USE
+   
+   Create Group:
+   1. Click "+" button in top-left
+   2. Click "Create Group"
+   3. Enter group name (required)
+   4. Choose privacy type
+   5. Choose member limit
+   6. Optionally select members to add
+   7. Click "Create Group"
+   
+   Join/Add to Group (depends on privacy):
+   - Public: Click "+" → "Create Group" and request admin to add you
+   - Invite: Admin sends invite link
+   - Closed: Only admin can add members
+   
+   View Group Info:
+   - Group name in chat header
+   - Members count: "5/50 members"
+   - Privacy type: "public", "invite-only", "closed"
+   
+   Manage Group (Admin only):
+   - Remove members via API
+   - Change group settings in future updates
+
+8. VALIDATION
+   - Group name required
+   - Member limit must be 5, 10, 15, or 50
+   - Privacy type must be valid
+   - Max members enforced
+   - Admin-only operations checked
+   - Duplicate members prevented
+
+9. STILL WORKS
+   - 1-to-1 direct messaging
+   - File upload/download
+   - Message history
+   - User search
+   - Login/signup
+   - All existing features
+
+MIGRATION STATUS:
+=================
+Migration 0002 applied successfully
+- Database updated with group fields
+- No data loss
+- Both old 1-to-1 chats and new groups work
+
+SERVER STARTUP:
+===============
+Option 1 - Click START.bat in messaging_app folder
+Option 2 - Manual:
+  cd c:\Users\Fayshal\Miome\messaging_app\backend
+  python manage.py runserver
+
+Then open: http://localhost:8000
+
+NEXT FEATURES (FUTURE):
+=======================
+- Group info/settings page
+- Invite links for groups
+- User notifications when added to group
+- Group member list view
+- Group rules/topics
+- Voice/video calls in groups
+- Group search
+- Pin messages
+- Reactions on messages
