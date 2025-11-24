@@ -465,21 +465,35 @@ class App {
     async loadConversations() {
         try {
             const response = await fetch(`${this.apiBase}/conversations/by_user/?user_id=${this.currentUser.id}`);
+            if (!response.ok) {
+                console.error('API error:', response.status, response.statusText);
+                this.conversations = [];
+                this.renderChatList();
+                return;
+            }
             const data = await response.json();
-            this.conversations = data;
+            this.conversations = Array.isArray(data) ? data : (data.results || []);
             this.renderChatList();
         } catch (e) {
             console.error('Error loading conversations:', e);
+            this.conversations = [];
+            this.renderChatList();
         }
     }
 
     async loadUsers() {
         try {
             const response = await fetch(`${this.apiBase}/users/list_users/`);
+            if (!response.ok) {
+                console.error('API error:', response.status, response.statusText);
+                this.users = [];
+                return;
+            }
             const data = await response.json();
-            this.users = data.filter(u => u.id !== this.currentUser.id);
+            this.users = (Array.isArray(data) ? data : (data.results || [])).filter(u => u.id !== this.currentUser.id);
         } catch (e) {
             console.error('Error loading users:', e);
+            this.users = [];
         }
     }
 

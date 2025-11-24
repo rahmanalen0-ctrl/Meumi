@@ -173,7 +173,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
 
         return Response(ConversationSerializer(conv).data, status=status.HTTP_201_CREATED)
 
-    @action(detail='pk', methods=['post'])
+    @action(detail=True, methods=['post'])
     def add_member(self, request, pk=None):
         conversation = self.get_object()
         user_id = request.data.get('user_id')
@@ -199,7 +199,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
 
         return Response(ConversationSerializer(conversation).data, status=status.HTTP_200_OK)
 
-    @action(detail='pk', methods=['post'])
+    @action(detail=True, methods=['post'])
     def remove_member(self, request, pk=None):
         conversation = self.get_object()
         user_id = request.data.get('user_id')
