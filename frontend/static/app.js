@@ -420,6 +420,12 @@ class App {
     async uploadFile(file) {
         if (!file) return;
 
+        // Check if user is in a conversation
+        if (!this.currentConversation || !this.currentConversation.id) {
+            alert('Please select a conversation first');
+            return;
+        }
+
         const maxSize = 1024 * 1024 * 1024;
         if (file.size > maxSize) {
             alert('File size exceeds 1GB limit');

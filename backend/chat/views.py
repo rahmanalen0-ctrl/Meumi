@@ -296,6 +296,12 @@ class FileUploadViewSet(viewsets.ViewSet):
         conversation_id = request.data.get('conversation_id')
         sender_id = request.data.get('sender_id')
 
+        # Validate required fields
+        if not conversation_id:
+            return Response({'error': 'conversation_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+        if not sender_id:
+            return Response({'error': 'sender_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+
         # Validate file extension
         dangerous_extensions = ['exe', 'bat', 'cmd', 'com', 'scr', 'vbs', 'js', 'jar', 'zip']
         file_ext = file_obj.name.lower().split('.')[-1]
@@ -308,8 +314,17 @@ class FileUploadViewSet(viewsets.ViewSet):
                           status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
 
         try:
-            conversation = get_object_or_404(Conversation, id=conversation_id)
-            sender = get_object_or_404(User, id=sender_id)
+            # Validate conversation exists
+            try:
+                conversation = Conversation.objects.get(id=conversation_id)
+            except Conversation.DoesNotExist:
+                return Response({'error': f'Conversation not found: {conversation_id}'}, status=status.HTTP_404_NOT_FOUND)
+
+            # Validate sender exists
+            try:
+                sender = User.objects.get(id=sender_id)
+            except User.DoesNotExist:
+                return Response({'error': f'User not found: {sender_id}'}, status=status.HTTP_404_NOT_FOUND)
 
             # Calculate hash and reset file position after hashing
             file_hash = hashlib.sha256()
@@ -320,6 +335,10 @@ class FileUploadViewSet(viewsets.ViewSet):
 
             file_name = f"uploads/{conversation_id}/{file_hash.hexdigest()}_{file_obj.name}"
             file_path = default_storage.save(file_name, file_obj)
+
+            # Ensure sender is a participant
+            if not Participant.objects.filter(conversation=conversation, user=sender).exists():
+                Participant.objects.create(conversation=conversation, user=sender)
 
             message = Message.objects.create(
                 conversation=conversation,
@@ -336,14 +355,18 @@ class FileUploadViewSet(viewsets.ViewSet):
                 hash=file_hash.hexdigest()
             )
 
-            for participant in conversation.participant_set.all():
-                if participant.user != sender:
-                    DeliveryReceipt.objects.create(message=message, recipient=participant.user)
+            # Create delivery receipts for other participants
+            for participant in conversation.participant_set.exclude(user=sender):
+                DeliveryReceipt.objects.create(message=message, recipient=participant.user)
 
             return Response(MessageSerializer(message).data, status=status.HTTP_201_CREATED)
 
+        except Conversation.DoesNotExist:
+            return Response({'error': f'Conversation not found'}, status=status.HTTP_404_NOT_FOUND)
+        except User.DoesNotExist:
+            return Response({'error': f'User not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({'error': f'Upload error: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @staticmethod
     def _get_content_type(filename):
