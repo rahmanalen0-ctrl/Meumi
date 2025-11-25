@@ -36,15 +36,16 @@ class App {
 
         this.trackActivity();
 
+        // Reduce frequency from 3s to 10s for less server load, but track interactions immediately
         this.activityInterval = setInterval(() => {
             this.trackActivity();
             this.refreshUserStatus();
             this.loadConversations();
             this.refreshMessages();
-        }, 3000);
+        }, 10000); // Increased from 3000ms to 10000ms
 
-        document.addEventListener('mousemove', () => this.trackActivity());
-        document.addEventListener('keypress', () => this.trackActivity());
+        document.addEventListener('mousemove', () => this.trackActivity(), { passive: true });
+        document.addEventListener('keypress', () => this.trackActivity(), { passive: true });
     }
 
     async trackActivity() {
@@ -70,10 +71,19 @@ class App {
             const response = await fetch(`${this.apiBase}/conversations/${this.currentConversation.id}/`);
             const data = await response.json();
 
+            // Only re-render if messages actually changed
             if (data.messages && data.messages.length !== this.lastMessageCount) {
                 this.currentConversation = data;
                 this.renderMessages();
                 this.lastMessageCount = data.messages.length;
+
+                // Auto-scroll to bottom only if there are new messages
+                const container = document.getElementById('messages-container');
+                if (container) {
+                    setTimeout(() => {
+                        container.scrollTop = container.scrollHeight;
+                    }, 0);
+                }
             }
         } catch (e) {
             console.error('Error refreshing messages:', e);
@@ -429,36 +439,55 @@ class App {
 
             if (response.ok) {
                 await this.openConversation(this.currentConversation.id);
+                console.log(`File uploaded successfully: ${file.name}`);
             } else {
-                alert('File upload failed');
+                const error = await response.json();
+                alert('File upload failed: ' + (error.error || response.statusText));
             }
         } catch (e) {
             alert('Error uploading file: ' + e.message);
+            console.error('Upload error:', e);
         }
     }
 
     async downloadFile(fileId) {
         try {
             const response = await fetch(`${this.apiBase}/files/download/?file_id=${fileId}`);
-            const data = await response.json();
+            if (!response.ok) {
+                alert('Download failed: ' + response.statusText);
+                return;
+            }
 
+            const data = await response.json();
+            if (!data.file) {
+                alert('No file data received');
+                return;
+            }
+
+            // Decode base64 to binary
             const binaryString = atob(data.file);
             const bytes = new Uint8Array(binaryString.length);
             for (let i = 0; i < binaryString.length; i++) {
                 bytes[i] = binaryString.charCodeAt(i);
             }
 
-            const blob = new Blob([bytes], { type: data.mime_type });
+            // Create blob with correct MIME type
+            const blob = new Blob([bytes], { type: data.mime_type || 'application/octet-stream' });
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = data.filename;
+            a.download = data.filename || 'download';
             document.body.appendChild(a);
             a.click();
-            window.URL.revokeObjectURL(url);
-            document.body.removeChild(a);
+
+            // Clean up
+            setTimeout(() => {
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+            }, 100);
         } catch (e) {
             alert('Error downloading file: ' + e.message);
+            console.error('Download error:', e);
         }
     }
 
@@ -472,8 +501,13 @@ class App {
                 return;
             }
             const data = await response.json();
-            this.conversations = Array.isArray(data) ? data : (data.results || []);
-            this.renderChatList();
+            const newConversations = Array.isArray(data) ? data : (data.results || []);
+
+            // Only re-render if conversations actually changed
+            if (JSON.stringify(newConversations) !== JSON.stringify(this.conversations)) {
+                this.conversations = newConversations;
+                this.renderChatList();
+            }
         } catch (e) {
             console.error('Error loading conversations:', e);
             this.conversations = [];
@@ -490,7 +524,12 @@ class App {
                 return;
             }
             const data = await response.json();
-            this.users = (Array.isArray(data) ? data : (data.results || [])).filter(u => u.id !== this.currentUser.id);
+            const newUsers = (Array.isArray(data) ? data : (data.results || [])).filter(u => u.id !== this.currentUser.id);
+
+            // Only update if users changed
+            if (JSON.stringify(newUsers) !== JSON.stringify(this.users)) {
+                this.users = newUsers;
+            }
         } catch (e) {
             console.error('Error loading users:', e);
             this.users = [];
@@ -571,7 +610,7 @@ class App {
             <div class="modal">
                 <h2>New Chat</h2>
                 <div style="margin-bottom: 16px;">
-                    <p style="font-size: 13px; color: #999; margin-bottom: 12px;">Select a person to message:</p>
+                    <p style="font-size: 13px; color: #999; margin-bottom: 12px;">Online Users (Click to chat):</p>
                     <div id="users-list" style="max-height: 250px; overflow-y: auto; margin-bottom: 16px;"></div>
                 </div>
                 <button class="modal-btn btn-new-group" style="background: #25d366; color: white; margin-bottom: 8px;">+ Create Group</button>
@@ -580,32 +619,98 @@ class App {
         `;
 
         const usersList = document.getElementById('users-list');
-        if (this.users.length === 0) {
+        const onlineUsers = this.users.filter(u => u.is_online);
+        const offlineUsers = this.users.filter(u => !u.is_online);
+
+        if (onlineUsers.length === 0 && offlineUsers.length === 0) {
             usersList.innerHTML = '<p style="color: #999; text-align: center; padding: 16px;">No users available</p>';
         } else {
-            this.users.forEach(user => {
-                const userDiv = document.createElement('div');
-                userDiv.style.marginBottom = '8px';
-                userDiv.style.padding = '12px';
-                userDiv.style.border = '1px solid #e0e0e0';
-                userDiv.style.borderRadius = '8px';
-                userDiv.style.display = 'flex';
-                userDiv.style.justifyContent = 'space-between';
-                userDiv.style.alignItems = 'center';
+            // Show online users first
+            if (onlineUsers.length > 0) {
+                const onlineHeader = document.createElement('div');
+                onlineHeader.style.fontWeight = 'bold';
+                onlineHeader.style.color = '#25d366';
+                onlineHeader.style.marginBottom = '8px';
+                onlineHeader.style.fontSize = '12px';
+                onlineHeader.textContent = `● ONLINE (${onlineUsers.length})`;
+                usersList.appendChild(onlineHeader);
 
-                const statusColor = user.is_online ? '#25d366' : '#999';
-                const statusText = user.is_online ? 'Online' : `Offline: ${user.offline_minutes}`;
+                onlineUsers.forEach(user => {
+                    const userDiv = document.createElement('div');
+                    userDiv.style.marginBottom = '8px';
+                    userDiv.style.padding = '12px';
+                    userDiv.style.border = '1px solid #e0e0e0';
+                    userDiv.style.borderRadius = '8px';
+                    userDiv.style.display = 'flex';
+                    userDiv.style.justifyContent = 'space-between';
+                    userDiv.style.alignItems = 'center';
+                    userDiv.style.cursor = 'pointer';
+                    userDiv.style.transition = 'background 0.2s';
+                    userDiv.style.backgroundColor = '#f9f9f9';
 
-                userDiv.innerHTML = `
-                    <button class="start-chat-btn" data-user-id="${user.id}" style="flex: 1; background: none; border: none; text-align: left; cursor: pointer; font-size: 14px; padding: 0; margin: 0;">
-                        ${user.username}
-                    </button>
-                    <span style="color: ${statusColor}; font-size: 12px; margin-left: 8px; white-space: nowrap;">
-                        ${statusText}
-                    </span>
-                `;
-                usersList.appendChild(userDiv);
-            });
+                    userDiv.onmouseover = () => userDiv.style.backgroundColor = '#e8f5e9';
+                    userDiv.onmouseout = () => userDiv.style.backgroundColor = '#f9f9f9';
+
+                    userDiv.innerHTML = `
+                        <button class="start-chat-btn" data-user-id="${user.id}" style="flex: 1; background: none; border: none; text-align: left; cursor: pointer; font-size: 14px; padding: 0; margin: 0; font-weight: 500;">
+                            ${user.username}
+                        </button>
+                        <span style="color: #25d366; font-size: 12px; margin-left: 8px; white-space: nowrap; font-weight: bold;">
+                            ● Online
+                        </span>
+                    `;
+                    usersList.appendChild(userDiv);
+                });
+            }
+
+            // Show offline users
+            if (offlineUsers.length > 0) {
+                if (onlineUsers.length > 0) {
+                    const divider = document.createElement('div');
+                    divider.style.height = '1px';
+                    divider.style.backgroundColor = '#e0e0e0';
+                    divider.style.margin = '12px 0';
+                    usersList.appendChild(divider);
+                }
+
+                const offlineHeader = document.createElement('div');
+                offlineHeader.style.fontWeight = 'bold';
+                offlineHeader.style.color = '#999';
+                offlineHeader.style.marginBottom = '8px';
+                offlineHeader.style.marginTop = '12px';
+                offlineHeader.style.fontSize = '12px';
+                offlineHeader.textContent = `○ OFFLINE (${offlineUsers.length})`;
+                usersList.appendChild(offlineHeader);
+
+                offlineUsers.forEach(user => {
+                    const userDiv = document.createElement('div');
+                    userDiv.style.marginBottom = '8px';
+                    userDiv.style.padding = '12px';
+                    userDiv.style.border = '1px solid #e0e0e0';
+                    userDiv.style.borderRadius = '8px';
+                    userDiv.style.display = 'flex';
+                    userDiv.style.justifyContent = 'space-between';
+                    userDiv.style.alignItems = 'center';
+                    userDiv.style.cursor = 'pointer';
+                    userDiv.style.transition = 'background 0.2s';
+                    userDiv.style.backgroundColor = '#f5f5f5';
+
+                    userDiv.onmouseover = () => userDiv.style.backgroundColor = '#efefef';
+                    userDiv.onmouseout = () => userDiv.style.backgroundColor = '#f5f5f5';
+
+                    const offlineTime = this.formatOfflineTime(user.offline_minutes);
+
+                    userDiv.innerHTML = `
+                        <button class="start-chat-btn" data-user-id="${user.id}" style="flex: 1; background: none; border: none; text-align: left; cursor: pointer; font-size: 14px; padding: 0; margin: 0;">
+                            ${user.username}
+                        </button>
+                        <span style="color: #999; font-size: 12px; margin-left: 8px; white-space: nowrap;">
+                            ○ Offline ${offlineTime}
+                        </span>
+                    `;
+                    usersList.appendChild(userDiv);
+                });
+            }
         }
 
         overlay.classList.add('active');
@@ -743,8 +848,17 @@ class App {
     }
 
     logout() {
+        if (this.currentUser) {
+            fetch(`${this.apiBase}/users/logout/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ user_id: this.currentUser.id })
+            }).catch(e => console.error('Error logging out:', e));
+        }
         localStorage.removeItem('currentUser');
         this.currentUser = null;
+        if (this.activityInterval) clearInterval(this.activityInterval);
+        if (this.messageRefreshInterval) clearInterval(this.messageRefreshInterval);
         this.showAuthModal();
     }
 
@@ -764,6 +878,25 @@ class App {
         const sizes = ['B', 'KB', 'MB', 'GB'];
         const i = Math.floor(Math.log(bytes) / Math.log(k));
         return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
+    }
+
+    formatOfflineTime(offlineString) {
+        // offlineString is already in format like "5m 32s" or "2h 15m"
+        if (!offlineString) return '';
+        // Extract just minutes and seconds
+        const match = offlineString.match(/(\d+)m (\d+)s/);
+        if (match) {
+            return `${match[1]}m ${match[2]}s ago`;
+        }
+        const secMatch = offlineString.match(/(\d+)s/);
+        if (secMatch) {
+            return `${secMatch[1]}s ago`;
+        }
+        const hourMatch = offlineString.match(/(\d+)h (\d+)m/);
+        if (hourMatch) {
+            return `${hourMatch[1]}h ago`;
+        }
+        return offlineString;
     }
 
     getFileIcon(contentType) {

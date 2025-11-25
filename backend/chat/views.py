@@ -21,18 +21,6 @@ class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
     serializer_class = UserSerializer
 
-    def dispatch(self, request, *args, **kwargs):
-        self.cleanup_inactive_users()
-        return super().dispatch(request, *args, **kwargs)
-
-    def cleanup_inactive_users(self):
-        thirty_mins_ago = timezone.now() - timedelta(minutes=30)
-        inactive_users = User.objects.filter(last_activity__lt=thirty_mins_ago)
-        for user in inactive_users:
-            conversations = Conversation.objects.filter(participant__user=user)
-            conversations.delete()
-        inactive_users.delete()
-
     @action(detail=False, methods=['post'])
     def signup(self, request):
         username = request.data.get('username', '').strip()
@@ -51,13 +39,15 @@ class UserViewSet(viewsets.ModelViewSet):
         if not username:
             return Response({'error': 'Username required'}, status=status.HTTP_400_BAD_REQUEST)
 
-        user = User.objects.filter(username=username).first()
-        if not user:
-            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
-
+        user, created = User.objects.get_or_create(
+            username=username,
+            defaults={'last_activity': timezone.now(), 'is_online': True}
+        )
+        
+        # Always update activity on login
         user.last_activity = timezone.now()
         user.is_online = True
-        user.save()
+        user.save(update_fields=['last_activity', 'is_online'])
         return Response(UserSerializer(user).data, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=['post'])
@@ -75,9 +65,23 @@ class UserViewSet(viewsets.ModelViewSet):
         except User.DoesNotExist:
             return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
 
+    @action(detail=False, methods=['post'])
+    def logout(self, request):
+        user_id = request.data.get('user_id')
+        if not user_id:
+            return Response({'error': 'user_id required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(id=user_id)
+            user.is_online = False
+            user.save(update_fields=['is_online'])
+            return Response({'status': 'logged out'}, status=status.HTTP_200_OK)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+
     @action(detail=False, methods=['get'])
     def list_users(self, request):
-        users = User.objects.all()
+        users = User.objects.all().order_by('-last_activity')
         return Response(UserSerializer(users, many=True).data)
 
 
@@ -129,7 +133,11 @@ class ConversationViewSet(viewsets.ModelViewSet):
             return Response({'error': 'user_id required'}, status=status.HTTP_400_BAD_REQUEST)
         
         user = get_object_or_404(User, id=user_id)
-        conversations = Conversation.objects.filter(participant__user=user).distinct()
+        conversations = Conversation.objects.filter(
+            participant__user=user
+        ).select_related('group_admin').prefetch_related(
+            'participant_set__user', 'messages__sender'
+        ).distinct().order_by('-created_at')
         return Response(ConversationSerializer(conversations, many=True).data)
 
     @action(detail=False, methods=['post'])
@@ -219,7 +227,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
 
 
 class MessageViewSet(viewsets.ModelViewSet):
-    queryset = Message.objects.all()
+    queryset = Message.objects.all().select_related('sender', 'conversation')
     serializer_class = MessageSerializer
 
     @action(detail=False, methods=['post'])
@@ -235,8 +243,15 @@ class MessageViewSet(viewsets.ModelViewSet):
         if not conversation_id or not sender_id or not content:
             return Response({'error': 'Missing required fields'}, status=status.HTTP_400_BAD_REQUEST)
 
-        conversation = get_object_or_404(Conversation, id=conversation_id)
-        sender = get_object_or_404(User, id=sender_id)
+        try:
+            conversation = Conversation.objects.get(id=conversation_id)
+            sender = User.objects.get(id=sender_id)
+        except (Conversation.DoesNotExist, User.DoesNotExist):
+            return Response({'error': 'Conversation or user not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Check if sender is a participant, if not add them
+        if not Participant.objects.filter(conversation=conversation, user=sender).exists():
+            Participant.objects.create(conversation=conversation, user=sender)
 
         expires_at = timezone.now() + timedelta(hours=sender.auto_delete_hours)
 
@@ -248,9 +263,9 @@ class MessageViewSet(viewsets.ModelViewSet):
             expires_at=expires_at
         )
 
-        for participant in conversation.participant_set.all():
-            if participant.user != sender:
-                DeliveryReceipt.objects.create(message=message, recipient=participant.user)
+        # Create delivery receipts for other participants
+        for participant in conversation.participant_set.exclude(user=sender):
+            DeliveryReceipt.objects.create(message=message, recipient=participant.user)
 
         return Response(MessageSerializer(message).data, status=status.HTTP_201_CREATED)
 
@@ -281,6 +296,12 @@ class FileUploadViewSet(viewsets.ViewSet):
         conversation_id = request.data.get('conversation_id')
         sender_id = request.data.get('sender_id')
 
+        # Validate file extension
+        dangerous_extensions = ['exe', 'bat', 'cmd', 'com', 'scr', 'vbs', 'js', 'jar', 'zip']
+        file_ext = file_obj.name.lower().split('.')[-1]
+        if file_ext in dangerous_extensions:
+            return Response({'error': f'File type .{file_ext} is not allowed'}, status=status.HTTP_400_BAD_REQUEST)
+
         MAX_FILE_SIZE = 1024 * 1024 * 1024
         if file_obj.size > MAX_FILE_SIZE:
             return Response({'error': f'File size exceeds {MAX_FILE_SIZE / (1024**3):.1f}GB limit'}, 
@@ -290,9 +311,12 @@ class FileUploadViewSet(viewsets.ViewSet):
             conversation = get_object_or_404(Conversation, id=conversation_id)
             sender = get_object_or_404(User, id=sender_id)
 
+            # Calculate hash and reset file position after hashing
             file_hash = hashlib.sha256()
+            file_obj.seek(0)  # Reset to beginning
             for chunk in file_obj.chunks():
                 file_hash.update(chunk)
+            file_obj.seek(0)  # Reset again before saving
 
             file_name = f"uploads/{conversation_id}/{file_hash.hexdigest()}_{file_obj.name}"
             file_path = default_storage.save(file_name, file_obj)
@@ -326,22 +350,37 @@ class FileUploadViewSet(viewsets.ViewSet):
         ext = filename.lower().split('.')[-1]
         if ext in ['jpg', 'jpeg', 'png', 'gif', 'webp']:
             return 'image'
-        elif ext in ['mp4', 'avi', 'mov', 'mkv']:
+        elif ext in ['mp4', 'avi', 'mov', 'mkv', 'webm', 'flv', 'wmv']:
             return 'video'
+        elif ext in ['mp3', 'wav', 'aac', 'flac', 'm4a', 'wma', 'ogg']:
+            return 'audio'
+        elif ext in ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'zip', 'rar']:
+            return 'file'
         return 'file'
 
     @action(detail=False, methods=['get'])
     def download(self, request):
+        import base64
+        
         file_id = request.query_params.get('file_id')
         file_msg = get_object_or_404(FileMessage, id=file_id)
 
         file_path = file_msg.storage_path
         if default_storage.exists(file_path):
-            file_content = default_storage.open(file_path, 'rb').read()
-            return Response({
-                'file': file_content.hex(),
-                'filename': file_msg.message.content,
-                'mime_type': file_msg.mime_type
-            })
+            try:
+                with default_storage.open(file_path, 'rb') as f:
+                    file_content = f.read()
+                
+                # Encode to base64 for safe JSON transmission
+                file_base64 = base64.b64encode(file_content).decode('utf-8')
+                
+                return Response({
+                    'file': file_base64,
+                    'filename': file_msg.message.content,
+                    'mime_type': file_msg.mime_type,
+                    'size': len(file_content)
+                })
+            except Exception as e:
+                return Response({'error': f'Error reading file: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         return Response({'error': 'File not found'}, status=status.HTTP_404_NOT_FOUND)

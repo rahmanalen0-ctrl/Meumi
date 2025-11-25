@@ -20,16 +20,18 @@ class UserSerializer(serializers.ModelSerializer):
     def get_offline_minutes(self, obj):
         now = timezone.now()
         delta = now - obj.last_activity
-        minutes = delta.total_seconds() // 60
-        seconds = int(delta.total_seconds() % 60)
-        if minutes < 1:
+        total_seconds = int(delta.total_seconds())
+        minutes = total_seconds // 60
+        seconds = total_seconds % 60
+        
+        if minutes == 0:
             return f"{seconds}s"
         elif minutes < 60:
-            return f"{int(minutes)}m {seconds}s"
+            return f"{minutes}m {seconds}s"
         else:
             hours = minutes // 60
             mins = minutes % 60
-            return f"{int(hours)}h {int(mins)}m"
+            return f"{hours}h {mins}m {seconds}s"
 
 
 class MessageSerializer(serializers.ModelSerializer):
